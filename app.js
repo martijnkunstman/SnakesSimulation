@@ -1,12 +1,9 @@
 // == Seedable PRNG via LCG ==
 class LCG {
     constructor(seed = 1) {
-      // ensure a 32-bit unsigned integer
       this.state = seed >>> 0;
     }
-    // returns [0,1)
     random() {
-      // constants from Numerical Recipes
       this.state = (this.state * 1664525 + 1013904223) >>> 0;
       return this.state / 0x100000000;
     }
@@ -21,14 +18,13 @@ class LCG {
       this.color     = color;
       this.body      = [[startX, startY]];
       this.rng       = rng;
-      // seedable initial direction
       this.direction = Math.floor(this.rng.random() * 4);
+      this.frozen    = false;
+      this.frozenTime = 0;
     }
   
     changeDirection(dir) {
-      if ((dir + 2) % 4 !== this.direction) {
-        this.direction = dir;
-      }
+      if ((dir + 2) % 4 !== this.direction) this.direction = dir;
     }
   
     static wrapDelta(a, b, worldSize) {
@@ -57,7 +53,6 @@ class LCG {
       const currDist = this.distanceToNearestFood(hx, hy, food);
   
       if (!this.foodNearby(food)) {
-        // seedable wiggle
         return this.changeDirection(Math.floor(this.rng.random() * 4));
       }
   
@@ -75,7 +70,6 @@ class LCG {
         const dist = this.distanceToNearestFood(nx, ny, food);
         if (dist < best.dist) best = { dir, dist };
       }
-  
       this.changeDirection(best.dir);
     }
   
@@ -87,6 +81,14 @@ class LCG {
       const [hx, hy] = this.body[0];
       let [nx, ny] = [hx, hy];
   
+      // compute next head'
+      if (this.frozen) {
+        this.frozenTime++;
+        if (this.frozenTime >= 5) {
+          this.frozen = false;
+          this.frozenTime = 0;
+        } else return;
+      }
       switch (this.direction) {
         case 0: ny--; break;
         case 1: nx++; break;
@@ -96,7 +98,7 @@ class LCG {
       nx = (nx + this.worldSize) % this.worldSize;
       ny = (ny + this.worldSize) % this.worldSize;
   
-      // self-collision
+      // 1) self-collision
       const idxSelf = this.getSelfCollisionIndex(nx, ny);
       let skipPop = false;
       if (idxSelf !== -1) {
@@ -104,10 +106,23 @@ class LCG {
         skipPop = true;
       }
   
-      // add new head
+      // 2) collision with other snakes: cut their tail at the hit point
+      allSnakes.forEach(other => {
+        if (other.id === this.id) return;
+        const idxOther = other.body.findIndex(
+          ([bx, by]) => bx === nx && by === ny
+        );
+        if (idxOther > -1) {
+          // keep only up to the segment you hit
+          other.body = other.body.slice(0, idxOther + 1);
+          other.frozen = true;
+        }
+      });
+  
+      // 3) add the new head
       this.body.unshift([nx, ny]);
   
-      // trim tail if not just self-collision
+      // 4) pop tail unless we just handled a self-collision
       if (!skipPop) this.body.pop();
     }
   
@@ -118,7 +133,6 @@ class LCG {
       );
     }
   }
-  
   
   class Game {
     constructor({
@@ -138,7 +152,6 @@ class LCG {
       this.colorArray = colorArray;
       this.rng        = new LCG(seed);
   
-      // canvas
       const square = Math.min(window.innerWidth, window.innerHeight);
       this.gridSize = Math.floor(square / this.worldSize);
       this.canvas   = document.createElement('canvas');
@@ -157,11 +170,7 @@ class LCG {
     }
   
     init() {
-      // food
-      for (let i = 0; i < this.foodCount; i++) {
-        this.spawnFood();
-      }
-      // snakes
+      for (let i = 0; i < this.foodCount; i++) this.spawnFood();
       for (let i = 0; i < this.snakeCount; i++) {
         const x = Math.floor(this.rng.random() * this.worldSize);
         const y = Math.floor(this.rng.random() * this.worldSize);
@@ -173,7 +182,7 @@ class LCG {
     drawFood() {
       this.ctx.fillStyle = 'red';
       this.food.forEach(([x, y]) =>
-        this.ctx.fillRect(x * this.gridSize, y * this.gridSize, this.gridSize, this.gridSize)
+        ctx.fillRect(x * this.gridSize, y * this.gridSize, this.gridSize, this.gridSize)
       );
     }
   
@@ -193,18 +202,14 @@ class LCG {
   
     gameLoop() {
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-  
-      // AI decide
       this.snakes.forEach(s => s.aiChangeDirection(this.food));
-  
-      // move & draw
       this.snakes.forEach(s => s.move(this.snakes));
       this.snakes.forEach(s => s.draw(this.ctx, this.gridSize));
-  
-      // food & growth
-      this.drawFood();
+      this.ctx.fillStyle = 'red';
+      this.food.forEach(([x, y]) =>
+        this.ctx.fillRect(x * this.gridSize, y * this.gridSize, this.gridSize, this.gridSize)
+      );
       this.eatAndGrow();
-  
       requestAnimationFrame(() => this.gameLoop());
     }
   
@@ -214,7 +219,6 @@ class LCG {
     }
   }
   
-  // on load, you can pass a different seed if you like:
   window.addEventListener('load', () => {
     const game = new Game({ worldSize: 100, snakeCount: 10, foodCount: 100, seed: 20250424 });
     game.start();
