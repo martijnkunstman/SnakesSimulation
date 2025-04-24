@@ -22,7 +22,7 @@ class Snake {
         this.cutSelf = cutSelf;
         this.cutOther = cutOther;
         this.frozen = false;
-        this.frozenTimeRemaining = 10;
+        this.frozenTimeRemaining = frozenTimeRemainingGLOBAL;
     }
 
     // Prevent 180° turns
@@ -70,55 +70,56 @@ class Snake {
     }
 
     // AI: look ahead, avoid collisions, and chase nearest food
-// inside class Snake:
-aiChangeDirection(food, allSnakes) {
-    const [hx, hy] = this.body[0];
-    const currDist = this.distanceToNearestFood(hx, hy, food);
-  
-    // collect all non-reverse, safe moves
-    const safeMoves = [];
-    for (let dir = 0; dir < 4; dir++) {
-      if ((dir + 2) % 4 === this.direction) continue; // no U-turn
-  
-      let nx = hx, ny = hy;
-      if (dir === 0) ny--;
-      if (dir === 1) nx++;
-      if (dir === 2) ny++;
-      if (dir === 3) nx--;
-      nx = (nx + this.worldSize) % this.worldSize;
-      ny = (ny + this.worldSize) % this.worldSize;
-  
-      if (this.collidesWithSelf(nx, ny)) continue;
-      if (this.collidesWithOthers(nx, ny, allSnakes)) continue;
-  
-      safeMoves.push({ dir, nx, ny });
+    // inside class Snake:
+    aiChangeDirection(food, allSnakes) {
+        const [hx, hy] = this.body[0];
+        const currDist = this.distanceToNearestFood(hx, hy, food);
+
+        // collect all non-reverse, safe moves
+        const safeMoves = [];
+        for (let dir = 0; dir < 4; dir++) {
+            if ((dir + 2) % 4 === this.direction) continue; // no U-turn
+
+            let nx = hx, ny = hy;
+            if (dir === 0) ny--;
+            if (dir === 1) nx++;
+            if (dir === 2) ny++;
+            if (dir === 3) nx--;
+            nx = (nx + this.worldSize) % this.worldSize;
+            ny = (ny + this.worldSize) % this.worldSize;
+
+            if (this.collidesWithSelf(nx, ny)) continue;
+            if (this.collidesWithOthers(nx, ny, allSnakes)) continue;
+
+            safeMoves.push({ dir, nx, ny });
+        }
+
+        if (safeMoves.length === 0) {
+            // no safe moves—keep going straight (might collide)
+            //console.warn(`Snake ${this.id} has no safe moves!`);
+            return;
+        }
+
+        // among safe moves, find those that strictly improve distance
+        const better = safeMoves.filter(m =>
+            this.distanceToNearestFood(m.nx, m.ny, food) < currDist
+        );
+
+        let choice;
+        if (better.length > 0) {
+            // pick the best improvement
+            choice = better.reduce((best, m) => {
+                const d = this.distanceToNearestFood(m.nx, m.ny, food);
+                return d < best.dist ? { dir: m.dir, dist: d } : best;
+            }, { dir: better[0].dir, dist: this.distanceToNearestFood(better[0].nx, better[0].ny, food) });
+            this.changeDirection(choice.dir);
+        } else {
+            // no improvement possible — pick random safe direction
+            const pick = safeMoves[Math.floor(this.rng.random() * safeMoves.length)];
+            this.changeDirection(pick.dir);
+        }
     }
-  
-    if (safeMoves.length === 0) {
-      // no safe moves—keep going straight (might collide)
-      return;
-    }
-  
-    // among safe moves, find those that strictly improve distance
-    const better = safeMoves.filter(m =>
-      this.distanceToNearestFood(m.nx, m.ny, food) < currDist
-    );
-  
-    let choice;
-    if (better.length > 0) {
-      // pick the best improvement
-      choice = better.reduce((best, m) => {
-        const d = this.distanceToNearestFood(m.nx, m.ny, food);
-        return d < best.dist ? { dir: m.dir, dist: d } : best;
-      }, { dir: better[0].dir, dist: this.distanceToNearestFood(better[0].nx, better[0].ny, food) });
-      this.changeDirection(choice.dir);
-    } else {
-      // no improvement possible — pick random safe direction
-      const pick = safeMoves[Math.floor(this.rng.random() * safeMoves.length)];
-      this.changeDirection(pick.dir);
-    }
-  }
-  
+
 
     // Find index in own body of (x,y), -1 if none
     getSelfCollisionIndex(x, y) {
@@ -157,8 +158,10 @@ aiChangeDirection(food, allSnakes) {
                 this.body = this.body.slice(0, idx);
                 //this.body = this.body.slice(0, idx + 1);
                 skipPop = true;
-                console.warn(`Snake ${this.id} cut itself at (${nx},${ny})`);
-                play = false; // stop the game
+                this.frozen = true;
+                this.frozenTimeRemaining = frozenTimeRemainingGLOBAL;
+                //console.warn(`Snake ${this.id} cut itself at (${nx},${ny})`);
+                //play = false; // stop the game
             }
         }
 
@@ -169,8 +172,9 @@ aiChangeDirection(food, allSnakes) {
                 const idxO = other.body.findIndex(([bx, by]) => bx === nx && by === ny);
                 if (idxO !== -1) {
                     other.body = other.body.slice(0, idxO + 1);
-                    other.frozen = false;
-                    other.frozenTimeRemaining = 10;
+                    other.frozen = true;
+                    other.frozenTimeRemaining = frozenTimeRemainingGLOBAL;
+                    //console.warn(`Snake ${this.id} cut other snake at (${nx},${ny})`);
                 }
             });
         }
@@ -246,7 +250,7 @@ class Game {
     }
 
     drawFood() {
-        this.ctx.fillStyle = 'red';
+        this.ctx.fillStyle = 'gray';
         this.food.forEach(([x, y]) =>
             this.ctx.fillRect(x * this.gridSize, y * this.gridSize, this.gridSize, this.gridSize)
         );
@@ -258,8 +262,8 @@ class Game {
             for (let i = 0; i < this.food.length; i++) {
                 if (hx === this.food[i][0] && hy === this.food[i][1]) {
                     s.body.push([hx, hy]);
-                    s.frozen = false;
-                    s.frozenTimeRemaining = 10;
+                    s.frozen = true;
+                    s.frozenTimeRemaining = frozenTimeRemainingGLOBAL;
                     this.food.splice(i, 1);
                     this.spawnFood();
                     break;
@@ -269,7 +273,7 @@ class Game {
     }
 
     gameLoop() {
-   
+
 
         // AI choose safe move before chasing food
         this.snakes.forEach(s => s.aiChangeDirection(this.food, this.snakes));
@@ -296,10 +300,10 @@ class Game {
 // Launch with options
 window.addEventListener('load', () => {
     const game = new Game({
-        worldSize: 100,
-        snakeCount: 1,
-        foodCount: 1,
-        seed: 1,
+        worldSize: 300,
+        snakeCount: 30,
+        foodCount: 400,
+        seed: 2,
         cutSelfOnCollision: true,
         cutOtherOnCollision: true
     });
@@ -307,3 +311,4 @@ window.addEventListener('load', () => {
 });
 
 let play = true;
+let frozenTimeRemainingGLOBAL = 0;
