@@ -250,10 +250,10 @@ class Game {
     }
 
     drawFood() {
-        this.ctx.fillStyle = 'gray';
-        this.food.forEach(([x, y]) =>
-            this.ctx.fillRect(x * this.gridSize, y * this.gridSize, this.gridSize, this.gridSize)
-        );
+        // this.ctx.fillStyle = 'gray';
+        // this.food.forEach(([x, y]) =>
+        //     this.ctx.fillRect(x * this.gridSize, y * this.gridSize, this.gridSize, this.gridSize)
+        // );
     }
 
     eatAndGrow() {
@@ -279,7 +279,13 @@ class Game {
         this.snakes.forEach(s => s.aiChangeDirection(this.food, this.snakes));
         this.snakes.forEach(s => s.move(this.snakes, this.food));
         if (!play) return;
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        //this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        //fade out ctx
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.01)';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height); // fade out effect
+        //this.ctx.globalAlpha = 0.1; // fade out effect
+        //this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height); // fade out effect
+
         // Move & draw
         this.snakes.forEach(s => s.draw(this.ctx, this.gridSize));
 
@@ -300,9 +306,9 @@ class Game {
 // Launch with options
 window.addEventListener('load', () => {
     const game = new Game({
-        worldSize: 100,
-        snakeCount: 20,
-        foodCount: 5000,
+        worldSize: 150,
+        snakeCount: 25,
+        foodCount: 6000,
         seed: 2,
         cutSelfOnCollision: true,
         cutOtherOnCollision: true
