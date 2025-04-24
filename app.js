@@ -300,9 +300,9 @@ class Game {
 // Launch with options
 window.addEventListener('load', () => {
     const game = new Game({
-        worldSize: 300,
-        snakeCount: 30,
-        foodCount: 400,
+        worldSize: 100,
+        snakeCount: 20,
+        foodCount: 5000,
         seed: 2,
         cutSelfOnCollision: true,
         cutOtherOnCollision: true
