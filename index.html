@@ -1,12 +1,252 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SnakeSimulation</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="app.js" defer></script>
+  <meta charset="utf-8">
+  <title>Shader-Rendered Snake</title>
+  <style>
+    body,html { margin:0; height:100%; overflow:hidden; background:#000 }
+    canvas { display:block; width:100%; height:100% }
+  </style>
 </head>
-<body>    
+<body>
+<canvas id="glcanvas"></canvas>
+<script>
+// == CPU Simulation Logic ==
+
+class LCG {
+  constructor(seed=1){ this.state=seed>>>0; }
+  random(){ this.state=(this.state*1664525+1013904223)>>>0; return this.state/0x100000000; }
+}
+
+class Snake {
+  constructor(id,x,y,wsize,rng){
+    this.id=id; this.worldSize=wsize;
+    this.body=[[x,y]]; this.rng=rng;
+    this.direction=Math.floor(rng.random()*4);
+    this.frozen=false; this.frozenTime=0;
+  }
+  changeDirection(dir){
+    if((dir+2)%4!==this.direction) this.direction=dir;
+  }
+  static wrapDelta(a,b,w){ const raw=b-a,alt=raw>0?raw-w:raw+w; return Math.abs(raw)<Math.abs(alt)?raw:alt; }
+  distanceToNearestFood(x,y,food){
+    let best=Infinity;
+    for(const [fx,fy] of food){
+      const dx=Math.abs(Snake.wrapDelta(x,fx,this.worldSize));
+      const dy=Math.abs(Snake.wrapDelta(y,fy,this.worldSize));
+      best=Math.min(best,dx+dy);
+    }
+    return best;
+  }
+  foodNearby(food,th=100){
+    const [hx,hy]=this.body[0];
+    return this.distanceToNearestFood(hx,hy,food)<=th*2;
+  }
+  collidesWithSelf(x,y){
+    return this.body.some(([bx,by])=>bx===x&&by===y);
+  }
+  collidesWithOthers(x,y,allSnakes){
+    return allSnakes.some(s=>
+      s.id!==this.id&&s.body.some(([bx,by])=>bx===x&&by===y)
+    );
+  }
+  aiChangeDirection(food,allSnakes){
+    const [hx,hy]=this.body[0];
+    const currDist=this.distanceToNearestFood(hx,hy,food);
+    const safe=[];
+    for(let dir=0;dir<4;dir++){
+      if((dir+2)%4===this.direction) continue;
+      let nx=hx+(dir===1)-(dir===3),ny=hy+(dir===2)-(dir===0);
+      nx=(nx+this.worldSize)%this.worldSize;
+      ny=(ny+this.worldSize)%this.worldSize;
+      if(this.collidesWithSelf(nx,ny)) continue;
+      if(this.collidesWithOthers(nx,ny,allSnakes)) continue;
+      safe.push({dir,nx,ny});
+    }
+    if(!safe.length) return;
+    if(!this.foodNearby(food)){
+      const p=safe[Math.floor(this.rng.random()*safe.length)];
+      return this.changeDirection(p.dir);
+    }
+    let best={dir:this.direction,dist:currDist};
+    for(const m of safe){
+      const d=this.distanceToNearestFood(m.nx,m.ny,food);
+      if(d<best.dist) best={dir:m.dir,dist:d};
+    }
+    if(best.dist<currDist) this.changeDirection(best.dir);
+    else{
+      const p=safe[Math.floor(this.rng.random()*safe.length)];
+      this.changeDirection(p.dir);
+    }
+  }
+  move(allSnakes,food){
+    if(this.frozen){
+      if(--this.frozenTime<=0) this.frozen=false;
+      return;
+    }
+    const [hx,hy]=this.body[0];
+    let nx=hx+(this.direction===1)-(this.direction===3),
+        ny=hy+(this.direction===2)-(this.direction===0);
+    nx=(nx+this.worldSize)%this.worldSize;
+    ny=(ny+this.worldSize)%this.worldSize;
+    // eat
+    let grew=false;
+    for(let i=0;i<food.length;i++){
+      if(nx===food[i][0]&&ny===food[i][1]){
+        this.body.push([nx,ny]);
+        food.splice(i,1);
+        grew=true;
+        break;
+      }
+    }
+    this.body.unshift([nx,ny]);
+    if(!grew) this.body.pop();
+  }
+}
+
+class Game {
+  constructor({worldSize=150,snakeCount=25,foodCount=4000,seed=2}={}){
+    this.worldSize=worldSize;
+    this.snakeCount=snakeCount;
+    this.foodCount=foodCount;
+    this.rng=new LCG(seed);
+    this.snakes=[];
+    this.food=[];
+  }
+  spawnFood(){
+    this.food.push([
+      Math.floor(this.rng.random()*this.worldSize),
+      Math.floor(this.rng.random()*this.worldSize)
+    ]);
+  }
+  init(){
+    for(let i=0;i<this.foodCount;i++) this.spawnFood();
+    for(let i=0;i<this.snakeCount;i++){
+      this.snakes.push(new Snake(
+        i,
+        Math.floor(this.rng.random()*this.worldSize),
+        Math.floor(this.rng.random()*this.worldSize),
+        this.worldSize,
+        this.rng
+      ));
+    }
+  }
+  step(){
+    this.snakes.forEach(s=>s.aiChangeDirection(this.food,this.snakes));
+    this.snakes.forEach(s=>s.move(this.snakes,this.food));
+  }
+}
+
+// == WebGL2 Rendering Logic ==
+
+const worldSize = 150;
+const canvas = document.getElementById('glcanvas');
+canvas.width = worldSize;
+canvas.height = worldSize;
+const gl = canvas.getContext('webgl2');
+
+// Vertex shader
+const vsSrc = `#version 300 es
+in vec4 a_position;
+void main(){ gl_Position=a_position; }`;
+// Fragment shader
+const fsSrc = `#version 300 es
+precision highp float;
+uniform sampler2D u_state;
+out vec4 outColor;
+void main(){
+  vec4 st = texture(u_state, gl_FragCoord.xy/vec2(${worldSize}.0,${worldSize}.0));
+  if(st.r>0.5)      outColor = vec4(1,1,1,1);
+  else if(st.g>0.5) outColor = vec4(1,0,0,1);
+  else              outColor = vec4(0,0,0,1);
+}`;
+
+// Compile helper
+function compile(gl,type,src){
+  const sh=gl.createShader(type);
+  gl.shaderSource(sh,src);
+  gl.compileShader(sh);
+  if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){
+    console.error(gl.getShaderInfoLog(sh));
+  }
+  return sh;
+}
+const vs=compile(gl,gl.VERTEX_SHADER,vsSrc);
+const fs=compile(gl,gl.FRAGMENT_SHADER,fsSrc);
+const prog=gl.createProgram();
+gl.attachShader(prog,vs);
+gl.attachShader(prog,fs);
+gl.linkProgram(prog);
+
+// Fullscreen quad
+const quadBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,quadBuf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([
+ -1,-1, 1,-1, -1,1,
+ -1, 1, 1,-1,  1,1
+]),gl.STATIC_DRAW);
+
+// State texture
+const stateTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D,stateTex);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,worldSize,worldSize,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+
+// Locations
+const posLoc = gl.getAttribLocation(prog,'a_position');
+const stLoc = gl.getUniformLocation(prog,'u_state');
+
+// CPU→GPU upload buffer
+const stateBuf = new Uint8Array(worldSize*worldSize*4);
+
+// Game instance
+const game = new Game({worldSize, snakeCount:25, foodCount:4000, seed:2});
+game.init();
+
+// Upload CPU state into RGBA texture
+function uploadState(){
+  stateBuf.fill(0);
+  // snakes
+  for(const s of game.snakes){
+    for(const [x,y] of s.body){
+      const i=(y*worldSize+x)*4;
+      stateBuf[i]=255;
+    }
+  }
+  // food
+  for(const [x,y] of game.food){
+    const i=(y*worldSize+x)*4+1;
+    stateBuf[i]=255;
+  }
+  gl.bindTexture(gl.TEXTURE_2D,stateTex);
+  gl.texSubImage2D(
+    gl.TEXTURE_2D,0,0,0,worldSize,worldSize,
+    gl.RGBA,gl.UNSIGNED_BYTE,stateBuf
+  );
+}
+
+// Render loop
+function render(){
+  game.step();
+  uploadState();
+
+  gl.viewport(0,0,worldSize,worldSize);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(prog);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER,quadBuf);
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);
+
+  gl.uniform1i(stLoc,0);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,stateTex);
+
+  gl.drawArrays(gl.TRIANGLES,0,6);
+  requestAnimationFrame(render);
+}
+render();
+</script>
 </body>
 </html>
